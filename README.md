@@ -13,8 +13,14 @@ go run .
 Por defecto descarga `https://nfc.eliyya.dev/keys`, verifica el manifiesto Ed25519
 con la raíz pública de `keys/root-public.pem`, integrada en el ejecutable, y admite
 solamente claves ACTIVE.
-Las claves autenticadas se guardan en la caché del usuario. Durante una hora las
-lecturas reutilizan esa caché, verificando de nuevo la firma raíz al abrirla.
+Las claves autenticadas se guardan en disco y se conservan en memoria durante
+la ejecución. Las lecturas siguientes reutilizan la memoria sin leer archivos ni
+volver a verificar el manifiesto. La vigencia máxima sigue siendo una hora desde
+la sincronización original; cargar desde disco no reinicia ese plazo. La firma
+de cada tarjeta se verifica siempre. Al reiniciar el proceso se carga la caché
+del usuario y se verifica su firma raíz antes de conservarla en memoria.
+La orden `refresh_keys` fuerza la descarga y sustituye las claves en memoria.
+El origen `memoria` aparece en `keysSource` cuando se reutilizan.
 Cuando caduca, se descarga un manifiesto nuevo; si no es posible, la validación falla.
 
 ### Descargar y comprobar la caché sin tarjeta
@@ -72,8 +78,7 @@ Este modo verifica la firma con la clave seleccionada explícitamente; no consul
 revocación ni caducidad de la clave. Nunca necesita claves privadas.
 
 `-once` finaliza después del primer intento de lectura; devuelve código 1 si falla.
-Sin esa opción espera tarjetas hasta pulsar Ctrl+C. La salida actual es de consola;
-el protocolo JSON para Electron es el siguiente paso.
+Sin esa opción espera tarjetas hasta pulsar Ctrl+C. Usa `-stdio` para el protocolo JSON de Electron documentado en `PROTOCOL.md`.
 
 ## Compilar y comprobar
 
@@ -98,9 +103,20 @@ del lector. No requiere instalar Go en el equipo de destino.
 ## Formato compatible
 
 - Registro NDEF MIME `application/vnd.eli.access`.
-- Payload de 70 bytes: versión (1), keyId (1), userId big endian (4), firma (64).
-- Firma Ed25519 sobre los primeros seis bytes, igual que Android.
-- userId decimal de ocho dígitos, preservando ceros iniciales.
+- V1: 70 bytes, versión (1), keyId (1), userId big endian (4), firma (64).
+  Se interpreta como estudiante y conserva los ocho dígitos del número de control.
+- V2: versión (1), keyId (1), tipo (1), longitud UTF-8 (1), identificador (N),
+  firma (64). La longitud total debe ser exactamente 4 + N + 64 bytes.
+- Tipos v2: 1 = `student`, 2 = `teacher`, 3 = `book`.
+- Identificadores: estudiante `[0-9]{8}`; docente
+  `[A-ZÑ&]{4}[0-9]{6}[A-Z0-9]{3}`; ejemplar
+  `[A-Z0-9]{3}-[0-9]{3}-[0-9]{4}-[0-9]{2}`.
+  Se exige UTF-8 válido y coincidencia completa, sin normalizar el contenido.
+- Firma Ed25519 sobre todos los bytes anteriores a la firma: seis en v1,
+  4 + N en v2, incluidos tipo y longitud. Se rechazan versiones y tipos desconocidos.
+- Por ejemplo, `ISC-001-0044-01` ocupa 15 bytes: la credencial v2 ocupa 83 bytes.
+- El evento JSON incluye `type` e `identifier` para ambas versiones;
+  `userId` solo aparece para estudiantes, como alias compatible.
 - Lectura del directorio MAD1 y de sectores asignados a NDEF usando las claves
   públicas estándar MAD y NDEF. No admite claves MIFARE personalizadas.
 - Selecciona el método de lectura por el ATR: Classic 1K usa sectores/MAD;
